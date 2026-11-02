@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build PHOTO KODI Android APK
 
 on:
   push:
@@ -27,15 +27,44 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Set up Android SDK tools
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK 35
+      # GitHub's Ubuntu runner already includes Android command-line tools.
+      # Do not use android-actions/setup-android here: it can re-download an
+      # older SDK manager and fail before the app is built.
+      - name: Configure preinstalled Android SDK 35
         shell: bash
         run: |
           set -euo pipefail
-          command -v sdkmanager
-          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_DIR/cmdline-tools" -type f -path '*/bin/sdkmanager' -print -quit 2>/dev/null || true)"
+          fi
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo 'ERROR: Preinstalled Android SDK manager was not found.' >&2
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "Using SDK manager: $SDKMANAGER"
+          "$SDKMANAGER" --version
+
+          # Avoid network calls if SDK 35 is already available on the runner.
+          if [ -d "$SDK_DIR/platforms/android-35" ] && [ -d "$SDK_DIR/build-tools/35.0.0" ]; then
+            echo 'Android SDK 35 and Build Tools 35.0.0 are already installed.'
+          else
+            echo 'Installing missing SDK 35 packages...'
+            # printf finishes normally even if sdkmanager stops reading.
+            printf 'y\n%.0s' {1..50} | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses
+            "$SDKMANAGER" --sdk_root="$SDK_DIR" --install \
+              'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+          fi
+
+          test -f "$SDK_DIR/platforms/android-35/android.jar"
+          test -x "$SDK_DIR/build-tools/35.0.0/aapt2"
+          echo 'Android SDK is ready.'
 
       - name: Extract the uploaded single ZIP
         id: project
